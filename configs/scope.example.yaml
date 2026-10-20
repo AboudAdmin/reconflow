@@ -1,0 +1,13 @@
+# Explicit scope. Default deny; any exclude beats any include.
+include:
+  domains: [example.com]        # example.com and *.example.com (label-boundary match)
+  hosts: []                     # exact hostnames only
+  ips: []
+  cidrs: []                     # needed to allow private/loopback ranges explicitly
+exclude:
+  domains: [corp.example.com]
+  hosts: [admin.example.com]
+  ips: []
+  cidrs: []
+ports: [80, 443]                # ports ReconFlow may request directly / keep from tool output
+schemes: [http, https]

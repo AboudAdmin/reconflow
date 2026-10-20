@@ -1,0 +1,39 @@
+# ReconFlow example configuration. Contains no secrets. Every key is optional;
+# unknown keys are rejected. Copy to ~/.reconflow/config/config.yaml to use by default.
+data_dir: ~/.reconflow          # targets/, database/, logs/ live here
+# database: ~/.reconflow/database/reconflow.db
+# scope_file: ~/scope.yaml      # explicit authorization; without it only the -d target + subdomains
+
+# enabled_stages: [subfinder, httpx]    # allow-list (empty = all)
+disabled_stages: []                     # e.g. [katana]
+passive_stages: [subfinder, gau, waybackurls]   # the only stages --passive may run (must be passive-capable)
+
+tools:                                  # optional explicit paths / per-tool switch
+  # httpx: {path: /home/kali/go/bin/httpx}
+  # katana: {enabled: false}
+
+concurrency:
+  global: 3                             # stages running at once
+  per_stage: {dnsx: 20, httpx: 20, katana: 5}   # passed to the tool's thread flag
+timeouts:
+  command: 20m
+  cancel_grace: 5s
+  per_stage: {}                         # e.g. {httpx: 30m}
+retry: {max: 2, backoff_base: 2s, backoff_max: 30s}
+rate_limit: {dnsx: 100, httpx: 20, katana: 10}   # requests/second per tool
+
+limits:
+  max_output_bytes: 67108864            # raw evidence kept per stage (parsing continues beyond)
+  max_line_bytes: 1048576
+  max_records_per_stage: 200000
+  js_download_bytes: 5242880
+crawl: {depth: 2}
+javascript:
+  enabled: true                         # direct download of in-scope .js (never in --passive)
+  workers: 4
+  requests_per_second: 5
+  timeout: 20s
+  max_files: 500
+reports: {html: true, jsonl: true}
+terminal: {color: auto, unicode: auto, refresh: 250ms}
+logging: {level: info}

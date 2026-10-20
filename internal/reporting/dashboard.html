@@ -1,0 +1,273 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline'; script-src 'unsafe-inline'; base-uri 'none'; form-action 'none'">
+<title>ReconFlow Report</title>
+<style>
+:root{--bg:#0d1117;--panel:#161b22;--panel2:#1c232c;--line:#30363d;--fg:#e6edf3;--mut:#9da7b3;--acc:#58a6ff;--ok:#3fb950;--warn:#d29922;--bad:#f85149;--gray:#8b949e;color-scheme:dark}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--fg);font:14px/1.5 system-ui,-apple-system,"Segoe UI",Roboto,sans-serif}
+header{padding:16px 24px;border-bottom:1px solid var(--line);background:var(--panel)}
+header h1{margin:0;font-size:18px;letter-spacing:.12em;color:var(--acc)}
+header .sub{color:var(--mut);margin-top:4px;word-break:break-all}
+nav{display:flex;flex-wrap:wrap;gap:4px;padding:8px 24px;border-bottom:1px solid var(--line);background:var(--panel)}
+nav button{background:none;border:1px solid transparent;color:var(--mut);padding:6px 12px;border-radius:6px;cursor:pointer;font:inherit}
+nav button:hover{color:var(--fg)}
+nav button[aria-selected=true]{color:var(--fg);border-color:var(--line);background:var(--panel2)}
+nav button:focus-visible,input:focus-visible,select:focus-visible,th button:focus-visible{outline:2px solid var(--acc);outline-offset:1px}
+main{padding:16px 24px;max-width:1500px;margin:0 auto}
+section[hidden]{display:none}
+h2{font-size:15px;margin:20px 0 8px;color:var(--fg)}
+.cards{display:grid;grid-template-columns:repeat(auto-fill,minmax(170px,1fr));gap:10px}
+.card{background:var(--panel);border:1px solid var(--line);border-radius:8px;padding:10px 12px}
+.card b{display:block;font-size:22px;font-variant-numeric:tabular-nums}
+.card span{color:var(--mut);font-size:12px}
+.kv{display:grid;grid-template-columns:max-content 1fr;gap:4px 16px;background:var(--panel);border:1px solid var(--line);border-radius:8px;padding:12px}
+.kv dt{color:var(--mut)} .kv dd{margin:0;word-break:break-all}
+.note{border-left:3px solid var(--warn);background:var(--panel);padding:8px 12px;margin:8px 0;border-radius:0 6px 6px 0}
+.empty{color:var(--mut);padding:16px;border:1px dashed var(--line);border-radius:8px}
+.tools{display:flex;gap:8px;flex-wrap:wrap;margin:8px 0}
+input,select{background:var(--panel);color:var(--fg);border:1px solid var(--line);border-radius:6px;padding:6px 8px;font:inherit}
+input[type=search]{min-width:260px}
+.wrap{overflow-x:auto;border:1px solid var(--line);border-radius:8px}
+table{border-collapse:collapse;width:100%}
+th,td{padding:6px 10px;border-bottom:1px solid var(--line);text-align:left;vertical-align:top;word-break:break-word}
+th{background:var(--panel2);position:sticky;top:0;white-space:nowrap}
+th button{all:unset;cursor:pointer;color:var(--fg);font-weight:600}
+td.mono,.mono{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;font-size:12.5px}
+.pill{display:inline-block;padding:0 8px;border-radius:10px;border:1px solid currentColor;font-size:12px;white-space:nowrap}
+.s-success,.s-new,.s-ok,.s-available{color:var(--ok)}
+.s-partial,.s-changed,.s-unknown,.s-possibly_removed,.s-incompatible,.s-not_seen{color:var(--warn)}
+.s-failed,.s-error{color:var(--bad)}
+.s-skipped,.s-queued,.s-cancelled,.s-unchanged,.s-baseline,.s-missing,.s-rejected{color:var(--gray)}
+.pager{display:flex;gap:8px;align-items:center;margin:8px 0;color:var(--mut)}
+.pager button{background:var(--panel);color:var(--fg);border:1px solid var(--line);border-radius:6px;padding:4px 10px;cursor:pointer}
+.pager button:disabled{opacity:.4;cursor:default}
+a{color:var(--acc)}
+</style>
+</head>
+<body>
+<header><h1>RECONFLOW</h1><div class="sub" id="sub"></div></header>
+<nav id="tabs" role="tablist"></nav>
+<main id="main"></main>
+<script id="data" type="application/json">/*__DATA__*/null</script>
+<script>
+"use strict";
+// All values are untrusted. Everything is rendered via textContent / createTextNode; never innerHTML.
+var D = JSON.parse(document.getElementById("data").textContent);
+function el(tag, attrs, kids) {
+  var e = document.createElement(tag);
+  if (attrs) Object.keys(attrs).forEach(function (k) {
+    if (k === "class") e.className = attrs[k]; else if (k === "text") e.textContent = attrs[k]; else e.setAttribute(k, attrs[k]);
+  });
+  (kids || []).forEach(function (c) { e.appendChild(typeof c === "string" ? document.createTextNode(c) : c); });
+  return e;
+}
+function pill(s) { return el("span", {class: "pill s-" + String(s).replace(/[^a-z_]/g, ""), text: String(s)}); }
+function str(v) { return v == null ? "" : Array.isArray(v) ? v.join(", ") : typeof v === "object" ? JSON.stringify(v) : String(v); }
+document.title = "ReconFlow - " + (D.run.target || "report");
+document.getElementById("sub").textContent = D.run.target + "  |  run " + D.run.id + "  |  generated " + D.generated_at;
+
+// ---- generic table: search, filters, sort, pagination (all client-side over the embedded, capped rows)
+function table(rows, cols, o) {
+  o = o || {};
+  var box = el("div"), state = {q: "", sort: -1, asc: true, page: 0, f: {}}, size = 50;
+  var tools = el("div", {class: "tools"});
+  var q = el("input", {type: "search", placeholder: "Search...", "aria-label": "Search"});
+  tools.appendChild(q);
+  (o.filters || []).forEach(function (f) {
+    var vals = {}; rows.forEach(function (r) { vals[str(r[f.field])] = 1; });
+    var s = el("select", {"aria-label": f.label}, [el("option", {value: "", text: "All " + f.label})]);
+    Object.keys(vals).sort().forEach(function (v) { s.appendChild(el("option", {value: v, text: v || "(none)"})); });
+    s.addEventListener("change", function () { state.f[f.field] = s.value; state.page = 0; draw(); });
+    tools.appendChild(s);
+  });
+  var info = el("span", {class: "pager"}), wrap = el("div", {class: "wrap"}), pager = el("div", {class: "pager"});
+  box.appendChild(tools); box.appendChild(wrap); box.appendChild(pager);
+  var hay = rows.map(function (r) { return cols.map(function (c) { return str(c.get(r)); }).join("\n").toLowerCase(); });
+  q.addEventListener("input", function () { state.q = q.value.toLowerCase(); state.page = 0; draw(); });
+  function draw() {
+    var idx = [];
+    rows.forEach(function (r, i) {
+      if (state.q && hay[i].indexOf(state.q) < 0) return;
+      for (var k in state.f) if (state.f[k] && str(r[k]) !== state.f[k]) return;
+      idx.push(i);
+    });
+    if (state.sort >= 0) {
+      var c = cols[state.sort];
+      idx.sort(function (a, b) {
+        var x = c.get(rows[a]), y = c.get(rows[b]);
+        x = typeof x === "number" ? x : str(x).toLowerCase(); y = typeof y === "number" ? y : str(y).toLowerCase();
+        return (x < y ? -1 : x > y ? 1 : 0) * (state.asc ? 1 : -1);
+      });
+    }
+    var pages = Math.max(1, Math.ceil(idx.length / size));
+    if (state.page >= pages) state.page = pages - 1;
+    var thead = el("tr");
+    cols.forEach(function (c, i) {
+      var b = el("button", {text: c.h + (state.sort === i ? (state.asc ? " ▲" : " ▼") : ""), type: "button"});
+      b.addEventListener("click", function () { if (state.sort === i) state.asc = !state.asc; else { state.sort = i; state.asc = true; } draw(); });
+      thead.appendChild(el("th", {scope: "col", "aria-sort": state.sort === i ? (state.asc ? "ascending" : "descending") : "none"}, [b]));
+    });
+    var tb = el("tbody");
+    idx.slice(state.page * size, state.page * size + size).forEach(function (i) {
+      var tr = el("tr");
+      cols.forEach(function (c) {
+        var v = c.get(rows[i]), td = el("td", {class: c.mono ? "mono" : ""});
+        if (c.pill) td.appendChild(pill(v)); else td.textContent = str(v);
+        tr.appendChild(td);
+      });
+      tb.appendChild(tr);
+    });
+    wrap.replaceChildren(el("table", null, [el("thead", null, [thead]), tb]));
+    var prev = el("button", {type: "button", text: "Prev"}), next = el("button", {type: "button", text: "Next"});
+    prev.disabled = state.page === 0; next.disabled = state.page >= pages - 1;
+    prev.addEventListener("click", function () { state.page--; draw(); });
+    next.addEventListener("click", function () { state.page++; draw(); });
+    pager.replaceChildren(prev, el("span", {text: "Page " + (state.page + 1) + " of " + pages + " - " + idx.length + " of " + rows.length + " rows"}), next);
+  }
+  draw();
+  return box;
+}
+function empty(msg) { return el("div", {class: "empty", text: msg}); }
+function stageById(id) { return (D.stages || []).filter(function (s) { return s.stage === id; })[0]; }
+// An empty table is explained: "no results" (stage succeeded) vs "not collected" (stage failed/skipped/absent).
+function whyEmpty(stageIds, what) {
+  var bad = [], ok = 0;
+  stageIds.forEach(function (id) {
+    var s = stageById(id);
+    if (!s) return;
+    if (s.status === "success") ok++; else bad.push(id + " " + s.status);
+  });
+  if (bad.length) return "No " + what + " recorded. Collection was incomplete (" + bad.join("; ") + "), so this is NOT evidence that none exist.";
+  if (ok) return "No " + what + " found. The collecting stage(s) completed successfully with zero results.";
+  return "No " + what + " recorded: no stage collecting them was part of this run.";
+}
+function truncNote(name) {
+  var n = D.html_truncated && D.html_truncated[name];
+  return n ? el("div", {class: "note", text: "Showing the first " + (D.html_truncated ? 20000 : 0) + " of " + n + " rows. The JSON/JSONL exports are complete."}) : null;
+}
+function add(parent) { for (var i = 1; i < arguments.length; i++) if (arguments[i]) parent.appendChild(arguments[i]); return parent; }
+
+var views = {};
+views.overview = function (s) {
+  var r = D.run, sm = D.summary || {};
+  add(s, el("h2", {text: "Run"}));
+  var dl = el("dl", {class: "kv"});
+  [["Target", r.target], ["Run ID", r.id], ["Status", null], ["Mode", r.passive ? "passive" : "active"], ["Started", r.started_at], ["Finished", r.finished_at || "(not finished)"],
+   ["Duration", r.duration_sec ? Math.round(r.duration_sec) + " s" : "-"], ["Baseline", D.baseline_run_id || "none"], ["ReconFlow", r.version]].forEach(function (p) {
+    dl.appendChild(el("dt", {text: p[0]}));
+    dl.appendChild(el("dd", null, [p[1] === null ? pill(r.status) : document.createTextNode(String(p[1]))]));
+  });
+  add(s, dl);
+  (D.notes || []).forEach(function (n) { add(s, el("div", {class: "note", text: n})); });
+  if (!D.comparison.baseline_established) add(s, el("div", {class: "note", text: D.comparison.note || "No baseline."}));
+  add(s, el("h2", {text: "Summary"}));
+  var cards = el("div", {class: "cards"});
+  [["Subdomains", "subdomains"], ["DNS observations", "dns_observations"], ["Live services", "live_services"], ["URLs", "urls"], ["URLs crawled live", "urls_crawled_live"],
+   ["URLs historical only", "urls_historical_only"], ["JS contents", "js_contents"], ["JS candidates (unverified)", "js_candidates"]].forEach(function (c) {
+    cards.appendChild(el("div", {class: "card"}, [el("b", {text: String(sm[c[1]] || 0)}), el("span", {text: c[0]})]));
+  });
+  var cc = D.comparison.counts || {}, tot = function (st) { var n = 0; Object.keys(cc).forEach(function (k) { if (k.slice(-st.length - 1) === "/" + st && k.indexOf("js_intel") !== 0) n += cc[k]; }); return n; };
+  if (D.comparison.baseline_established) [["New", "new"], ["Changed", "changed"], ["Not seen", "not_seen"], ["Possibly removed", "possibly_removed"], ["Unknown", "unknown"]].forEach(function (c) {
+    cards.appendChild(el("div", {class: "card"}, [el("b", {text: String(tot(c[1]))}), el("span", {text: c[0] + " vs baseline"})]));
+  });
+  add(s, cards);
+  var bad = (D.stages || []).filter(function (x) { return x.status !== "success"; });
+  if (bad.length) add(s, el("h2", {text: "Stages needing attention"}), table(bad, [
+    {h: "Stage", get: function (x) { return x.stage; }}, {h: "Status", get: function (x) { return x.status; }, pill: 1}, {h: "Detail", get: function (x) { return x.detail; }}]));
+};
+views.assets = function (s) {
+  var rows = D.assets || [];
+  if (!rows.length) return add(s, empty(whyEmpty(["subfinder", "dnsx", "httpx"], "assets")));
+  add(s, truncNote("assets"), table(rows, [
+    {h: "Kind", get: function (r) { return r.kind; }}, {h: "Asset", get: function (r) { return r.key; }, mono: 1}, {h: "State", get: function (r) { return r.state; }, pill: 1},
+    {h: "Attributes", get: function (r) { return r.attrs; }, mono: 1}, {h: "Sources", get: function (r) { return r.sources; }}, {h: "First run", get: function (r) { return r.first_run; }, mono: 1}],
+    {filters: [{field: "kind", label: "kinds"}, {field: "state", label: "states"}]}));
+};
+views.urls = function (s) {
+  var rows = D.urls || [];
+  if (!rows.length) return add(s, empty(whyEmpty(["gau", "waybackurls", "katana"], "URLs")));
+  add(s, el("div", {class: "note", text: "origin 'crawled' = returned by the crawler this run; 'historical' = from web archives only, not evidence of current availability."}), truncNote("urls"),
+    table(rows, [{h: "URL", get: function (r) { return r.url; }, mono: 1}, {h: "Origin", get: function (r) { return r.origin; }}, {h: "State", get: function (r) { return r.state; }, pill: 1},
+      {h: "Parameters", get: function (r) { return r.params; }}, {h: "Sources", get: function (r) { return r.sources; }}, {h: "JS", get: function (r) { return r.is_js ? "yes" : ""; }}],
+      {filters: [{field: "origin", label: "origins"}, {field: "state", label: "states"}]}));
+};
+views.js = function (s) {
+  var rows = D.javascript || [];
+  if (!rows.length) add(s, empty(whyEmpty(["js"], "JavaScript content")));
+  else add(s, el("h2", {text: "Content (by SHA-256)"}), truncNote("js"), table(rows, [
+    {h: "SHA-256", get: function (r) { return r.sha256; }, mono: 1}, {h: "Source URLs", get: function (r) { return r.source_urls; }, mono: 1}, {h: "Size", get: function (r) { return r.size; }},
+    {h: "Type", get: function (r) { return r.content_type; }}, {h: "Candidates", get: function (r) { return r.candidates; }}, {h: "State", get: function (r) { return r.state; }, pill: 1}], {filters: [{field: "state", label: "states"}]}));
+  var c = D.js_candidates || [];
+  if (c.length) add(s, el("h2", {text: "Static candidates (unverified; not vulnerabilities)"}), truncNote("candidates"), table(c, [
+    {h: "Type", get: function (r) { return r.type; }}, {h: "Value", get: function (r) { return r.value; }, mono: 1}, {h: "Rule", get: function (r) { return r.rule; }}, {h: "State", get: function (r) { return r.state; }, pill: 1},
+    {h: "Verification", get: function (r) { return r.verification; }}, {h: "Source URLs", get: function (r) { return r.source_urls; }, mono: 1}], {filters: [{field: "type", label: "types"}, {field: "state", label: "states"}]}));
+  var f = D.javascript_fetches || [];
+  if (f.length) add(s, el("h2", {text: "Fetch outcomes"}), table(f, [{h: "URL", get: function (r) { return r.URL; }, mono: 1}, {h: "Outcome", get: function (r) { return r.Outcome; }, pill: 1}, {h: "Detail", get: function (r) { return r.Detail; }}], {filters: [{field: "Outcome", label: "outcomes"}]}));
+};
+views.api = function (s) {
+  var rows = [];
+  (D.js_candidates || []).forEach(function (c) {
+    if (c.type === "graphql") rows.push({api: "GraphQL (reference)", value: c.value, via: "JS " + c.rule, state: c.state, src: c.source_urls});
+    else if (c.type === "websocket") rows.push({api: "WebSocket (reference)", value: c.value, via: "JS " + c.rule, state: c.state, src: c.source_urls});
+    else if (c.type === "endpoint" && c.rule === "api-like-path") rows.push({api: "REST-style path (candidate)", value: c.value, via: "JS " + c.rule, state: c.state, src: c.source_urls});
+  });
+  (D.urls || []).forEach(function (u) { if (/\/(api|graphql|v\d+)(\/|$|\?)/i.test(u.url)) rows.push({api: /graphql/i.test(u.url) ? "GraphQL (reference)" : "REST-style path (candidate)", value: u.url, via: "URL " + u.origin, state: u.state, src: u.sources}); });
+  if (!rows.length) return add(s, empty("No API candidates were extracted. This lists static candidates only; none are verified."));
+  add(s, el("div", {class: "note", text: "Candidates from static analysis and URL patterns. Not verified against live traffic."}),
+    table(rows, [{h: "Type", get: function (r) { return r.api; }}, {h: "Value", get: function (r) { return r.value; }, mono: 1}, {h: "Found via", get: function (r) { return r.via; }}, {h: "State", get: function (r) { return r.state; }, pill: 1}, {h: "Source", get: function (r) { return r.src; }, mono: 1}],
+      {filters: [{field: "api", label: "types"}, {field: "state", label: "states"}]}));
+};
+views.changes = function (s) {
+  if (!D.comparison.baseline_established) return add(s, empty(D.comparison.note || "No baseline."));
+  var rows = D.changes || [];
+  add(s, el("div", {class: "note", text: "Compared with baseline " + D.baseline_run_id + ". Unchanged items are counted in the summary but not listed. 'not_seen' is not proof of removal."}));
+  if (!rows.length) return add(s, empty("No differences from the baseline were detected."));
+  add(s, truncNote("changes"), table(rows, [{h: "Subject", get: function (r) { return r.subject; }}, {h: "Kind", get: function (r) { return r.kind; }}, {h: "Key", get: function (r) { return r.key; }, mono: 1}, {h: "State", get: function (r) { return r.state; }, pill: 1}, {h: "Reason", get: function (r) { return r.reason; }}],
+    {filters: [{field: "state", label: "states"}, {field: "subject", label: "subjects"}]}));
+};
+views.execution = function (s) {
+  add(s, el("h2", {text: "Stages"}), (D.stages || []).length ? table(D.stages, [
+    {h: "Stage", get: function (r) { return r.stage; }}, {h: "Tool", get: function (r) { return r.tool; }}, {h: "Status", get: function (r) { return r.status; }, pill: 1}, {h: "Passive", get: function (r) { return r.passive ? "yes" : "no"; }},
+    {h: "Duration (s)", get: function (r) { return Math.round(r.duration_sec * 10) / 10; }}, {h: "In", get: function (r) { return r.inputs; }}, {h: "Out", get: function (r) { return r.outputs; }}, {h: "Dropped", get: function (r) { return r.dropped; }},
+    {h: "Retries", get: function (r) { return r.retries; }}, {h: "Exit", get: function (r) { return r.exit_code; }}, {h: "Detail", get: function (r) { return r.detail; }}, {h: "Artifact", get: function (r) { return r.artifact; }, mono: 1}]) : empty("No stages recorded."));
+  add(s, el("h2", {text: "Tools"}), (D.tools || []).length ? table(D.tools, [{h: "Tool", get: function (r) { return r.tool; }}, {h: "Binary", get: function (r) { return r.binary; }}, {h: "Version", get: function (r) { return r.version; }},
+    {h: "Status", get: function (r) { return r.status; }, pill: 1}, {h: "Detail", get: function (r) { return r.detail; }}]) : empty("No tool information."));
+  add(s, el("h2", {text: "Errors"}), (D.errors || []).length ? table(D.errors, [{h: "Stage", get: function (r) { return r.stage; }}, {h: "Message", get: function (r) { return r.message; }}, {h: "At", get: function (r) { return r.at; }}]) : empty("No errors recorded."));
+};
+views.coverage = function (s) {
+  add(s, el("div", {class: "note", text: "Coverage shows what this run could and could not observe. A kind is 'comparable' only if every stage that collects it succeeded."}));
+  add(s, table(D.coverage || [], [{h: "Kind", get: function (r) { return r.kind; }}, {h: "Collecting stages", get: function (r) { return r.producers; }}, {h: "Comparable", get: function (r) { return r.comparable ? "yes" : "no"; }}, {h: "Why", get: function (r) { return r.explanation; }}]));
+  add(s, el("h2", {text: "Stage status"}), table(D.stages || [], [{h: "Stage", get: function (r) { return r.stage; }}, {h: "Status", get: function (r) { return r.status; }, pill: 1}, {h: "Explanation", get: function (r) { return r.detail || (r.status === "success" ? "completed" : ""); }}]));
+};
+views.artifacts = function (s) {
+  add(s, el("div", {class: "note", text: "Links are limited to files generated by ReconFlow next to this report. Raw tool output lives in the run directory on disk and is not linked."}));
+  var ul = el("ul");
+  (D.artifacts || []).forEach(function (n) {
+    if (/^[A-Za-z0-9_.-]+$/.test(n) && n !== "latest.html") ul.appendChild(el("li", null, [el("a", {href: n, text: n})]));
+  });
+  add(s, ul);
+};
+var order = [["overview", "Overview"], ["assets", "Assets"], ["urls", "URLs"], ["js", "JavaScript"], ["api", "API explorer"], ["changes", "Changes"], ["execution", "Tool execution"], ["coverage", "Coverage"], ["artifacts", "Artifacts"]];
+var tabs = document.getElementById("tabs"), main = document.getElementById("main"), built = {};
+function show(id) {
+  order.forEach(function (o) {
+    var b = document.getElementById("tab-" + o[0]), sec = document.getElementById("sec-" + o[0]);
+    b.setAttribute("aria-selected", String(o[0] === id)); sec.hidden = o[0] !== id;
+  });
+  if (!built[id]) { built[id] = 1; views[id](document.getElementById("sec-" + id)); }
+  try { history.replaceState(null, "", "#" + id); } catch (e) {}
+}
+order.forEach(function (o) {
+  var b = el("button", {id: "tab-" + o[0], role: "tab", type: "button", text: o[1], "aria-selected": "false"});
+  b.addEventListener("click", function () { show(o[0]); });
+  tabs.appendChild(b);
+  main.appendChild(el("section", {id: "sec-" + o[0], role: "tabpanel", hidden: ""}));
+});
+show(views[location.hash.slice(1)] ? location.hash.slice(1) : "overview");
+</script>
+</body>
+</html>
