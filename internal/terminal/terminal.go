@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"io"
 	"os"
-	"sort"
 	"strconv"
 	"strings"
 	"sync"
@@ -19,6 +18,7 @@ import (
 type Options struct {
 	Color, Unicode bool
 	Width          int
+	Version        string
 }
 
 const (
@@ -52,12 +52,12 @@ func Elapsed(d time.Duration) string {
 func clip(s string, w int) string {
 	if w > 0 && utf8.RuneCountInString(s) > w {
 		r := []rune(s)
-		return string(r[:w-1]) + "…"
+		return string(r[:w-3]) + "..." // ASCII so plain terminals stay clean
 	}
 	return s
 }
 
-// Render builds the full screen. now is injected for deterministic tests.
+// Render builds the live frame (no banner; see Header). now is injected for deterministic tests.
 func Render(s model.Snapshot, o Options, now time.Time) string {
 	if o.Width < 40 {
 		o.Width = 80
@@ -70,25 +70,6 @@ func Render(s model.Snapshot, o Options, now time.Time) string {
 	}
 	var b strings.Builder
 	line := func(c, t string) { b.WriteString(col(c, clip(t, o.Width-1)) + "\n") }
-	rule := "-"
-	if o.Unicode {
-		rule = "━"
-	}
-	if o.Width >= 50 {
-		for _, l := range Banner {
-			line(bold+cyan, l)
-		}
-		line(gray, "recon that separates signal from noise")
-	} else {
-		line(bold+cyan, "RECONFLOW")
-	}
-	line(gray, strings.Repeat(rule, minInt(o.Width-1, 60)))
-	line("", "Target: "+s.Target)
-	line("", "Run:    "+s.RunID)
-	if s.Note != "" {
-		line(yellow, s.Note)
-	}
-	b.WriteString("\n")
 	done, running, retries := 0, 0, 0
 	cur := []string{}
 	for _, st := range s.Stages {
@@ -105,17 +86,12 @@ func Render(s model.Snapshot, o Options, now time.Time) string {
 	if len(cur) > 0 {
 		curStage = strings.Join(cur, ", ")
 	}
-	line("", "Progress "+Bar(done, len(s.Stages), 28, o.Unicode))
-	line("", "Elapsed: "+Elapsed(now.Sub(s.Started)))
-	line("", "Stage:   "+curStage)
-	line("", fmt.Sprintf("Completed stages: %d/%d   Active tool processes: %d   Retries: %d", done, len(s.Stages), running, retries))
-	b.WriteString("\n")
-	c := s.Counts
-	line("", fmt.Sprintf("Subdomains: %d   DNS observations: %d   Live services: %d", c["subdomain"], c["dns"], c["service"]))
-	line("", fmt.Sprintf("URL candidates: %d   JS contents analyzed: %d   JS candidates: %d", c["url"], c["js"], c["js_candidates"]))
-	if c["new"] > 0 || c["changed"] > 0 {
-		line("", fmt.Sprintf("New: %d   Changed: %d", c["new"], c["changed"]))
+	line(bold, "Target: "+s.Target+"   Run: "+s.RunID+"   Elapsed: "+Elapsed(now.Sub(s.Started)))
+	if s.Note != "" {
+		line(yellow, s.Note)
 	}
+	line("", "Progress "+Bar(done, len(s.Stages), minInt(28, o.Width-30), o.Unicode))
+	line("", fmt.Sprintf("Stage: %s   Active: %d   Retries: %d", curStage, running, retries))
 	b.WriteString("\n")
 	for _, st := range s.Stages {
 		t := tags[st.Status]
@@ -136,24 +112,22 @@ func Render(s model.Snapshot, o Options, now time.Time) string {
 		}
 		b.WriteString(col(t.color, tag) + pad + clip(st.Title+extra, o.Width-14) + "\n")
 	}
-	if len(s.Events) > 0 {
-		b.WriteString("\n")
-		line(gray, "Recent events:")
+	b.WriteString("\n")
+	c := s.Counts
+	counters := fmt.Sprintf("Subdomains: %d   DNS: %d   Live services: %d   URLs: %d   JS analyzed: %d   JS candidates: %d",
+		c["subdomain"], c["dns"], c["service"], c["url"], c["js"], c["js_candidates"])
+	if c["new"] > 0 || c["changed"] > 0 {
+		counters += fmt.Sprintf("   New: %d   Changed: %d", c["new"], c["changed"])
+	}
+	line("", counters)
+	if n := len(s.Events); n > 0 {
 		mark := "+"
 		if o.Unicode {
 			mark = "▸"
 		}
-		ev := s.Events
-		if len(ev) > 5 {
-			ev = ev[len(ev)-5:]
-		}
-		for _, e := range ev {
-			line("", mark+" "+e.Text)
-		}
+		line(gray, "Activity: "+mark+" "+s.Events[n-1].Text)
 	}
 	if len(s.Errors) > 0 {
-		b.WriteString("\n")
-		line(red, "Errors:")
 		er := s.Errors
 		if len(er) > 3 {
 			er = er[len(er)-3:]
@@ -162,11 +136,29 @@ func Render(s model.Snapshot, o Options, now time.Time) string {
 			line(red, "! "+e)
 		}
 	}
-	if len(s.Reports) > 0 {
-		b.WriteString("\n")
-		for _, r := range s.Reports {
-			line("", "Report: "+r)
+	for _, r := range s.Reports {
+		line("", "Report: "+r)
+	}
+	return b.String()
+}
+
+// Header is the one-time startup banner.
+func Header(o Options) string {
+	if o.Width < 40 {
+		o.Width = 80
+	}
+	ver := ""
+	if o.Version != "" {
+		ver = " v" + o.Version
+	}
+	var b strings.Builder
+	if o.Width >= 50 {
+		for _, l := range Banner {
+			b.WriteString(Paint(o, bold+cyan, l) + "\n")
 		}
+		b.WriteString(Paint(o, gray, "recon that separates signal from noise"+ver) + "\n\n")
+	} else {
+		b.WriteString(Paint(o, bold+cyan, "RECONFLOW"+ver) + "\n\n")
 	}
 	return b.String()
 }
@@ -210,25 +202,31 @@ func Detect(out *os.File, colorCfg, uniCfg string) (opts Options, tty bool) {
 	return
 }
 
-// UI redraws on a throttle (TTY) or prints transitions as lines (non-TTY).
+// UI redraws in place on a throttle (TTY) or prints transitions as lines (non-TTY).
 type UI struct {
 	out     io.Writer
 	tr      *model.Tracker
 	opts    Options
 	tty     bool
 	every   time.Duration
+	now     func() time.Time
 	stop    chan struct{}
 	wg      sync.WaitGroup
-	lines   int
+	prev    string // last frame drawn; identical frames are skipped
+	rows    []int  // visible width of each drawn line, to count wrapped rows after a resize
 	printed int
 	last    map[string]model.Status
 }
 
 func New(out io.Writer, tr *model.Tracker, o Options, tty bool, every time.Duration) *UI {
-	return &UI{out: out, tr: tr, opts: o, tty: tty, every: every, stop: make(chan struct{}), last: map[string]model.Status{}}
+	return &UI{out: out, tr: tr, opts: o, tty: tty, every: every, now: time.Now, stop: make(chan struct{}), last: map[string]model.Status{}}
 }
 
 func (u *UI) Start() {
+	fmt.Fprint(u.out, Header(u.opts))
+	if u.tty {
+		fmt.Fprint(u.out, "\x1b[?25l") // hide the cursor while redrawing
+	}
 	u.wg.Add(1)
 	go func() {
 		defer u.wg.Done()
@@ -239,33 +237,24 @@ func (u *UI) Start() {
 			case <-u.stop:
 				return
 			case <-t.C:
-				u.tick(false)
+				u.tick()
 			}
 		}
 	}()
 }
 
-func (u *UI) tick(final bool) {
+func (u *UI) tick() {
 	if u.tty {
-		// Throttled by the ticker; redrawn even when idle so the elapsed clock advances.
-		screen := Render(u.tr.Snapshot(), u.opts, time.Now())
-		if u.lines > 0 {
-			fmt.Fprintf(u.out, "\x1b[%dA\x1b[J", u.lines)
-		}
-		fmt.Fprint(u.out, screen)
-		u.lines = strings.Count(screen, "\n")
+		u.draw()
 		return
 	}
 	s := u.tr.Snapshot()
-	ids := make([]string, 0)
 	for _, st := range s.Stages {
-		ids = append(ids, st.ID)
 		if u.last[st.ID] != st.Status && st.Status != model.Queued {
-			fmt.Fprintf(u.out, "[%s] %s: %s %s\n", time.Now().Format("15:04:05"), st.Title, st.Status, st.Detail)
+			fmt.Fprintf(u.out, "[%s] %s: %s %s\n", u.now().Format("15:04:05"), st.Title, st.Status, st.Detail)
 		}
 		u.last[st.ID] = st.Status
 	}
-	sort.Strings(ids)
 	if n := s.EvTotal - u.printed; n > 0 {
 		ev := s.Events
 		if n > len(ev) {
@@ -278,11 +267,74 @@ func (u *UI) tick(final bool) {
 	}
 }
 
-// Stop halts redraws and prints the final frame.
+// draw repaints the live frame in place. Flicker root cause: every tick erased the region
+// (cursor-up + clear-to-end) and reprinted it even when nothing changed, and the cursor-up
+// count ignored wrapped lines after a resize. Now identical frames are skipped, lines are
+// overwritten (erase-to-EOL, never a blank frame) and wrapped rows are counted.
+func (u *UI) draw() {
+	o := u.opts
+	var h int
+	if f, ok := u.out.(*os.File); ok {
+		if w, rows := size(f); w >= 40 {
+			o.Width, h = minInt(w, 160), rows
+		}
+	}
+	lines := strings.Split(strings.TrimSuffix(Render(u.tr.Snapshot(), o, u.now()), "\n"), "\n")
+	// shortcut: a terminal shorter than the frame drops the tail lines (errors/reports); the final summary still lists failures.
+	if h > 2 && len(lines) > h-1 {
+		lines = lines[:h-1]
+	}
+	screen := strings.Join(lines, "\n")
+	if screen == u.prev {
+		return
+	}
+	var b strings.Builder
+	if up := wrapped(u.rows, o.Width); up > 0 {
+		fmt.Fprintf(&b, "\x1b[%dA\r", up)
+	}
+	u.rows = u.rows[:0]
+	for _, l := range lines {
+		b.WriteString(l + "\x1b[K\n")
+		u.rows = append(u.rows, visLen(l))
+	}
+	b.WriteString("\x1b[J") // drop leftovers when the frame got shorter
+	fmt.Fprint(u.out, b.String())
+	u.prev = screen
+}
+
+// wrapped is the number of terminal rows the drawn lines occupy at width w.
+func wrapped(widths []int, w int) int {
+	n := 0
+	for _, l := range widths {
+		n += maxInt(1, (l+w-1)/maxInt(w, 1))
+	}
+	return n
+}
+
+// visLen counts printable runes, skipping ANSI SGR sequences.
+func visLen(s string) int {
+	n, esc := 0, false
+	for _, r := range s {
+		switch {
+		case esc:
+			esc = r != 'm'
+		case r == '\x1b':
+			esc = true
+		default:
+			n++
+		}
+	}
+	return n
+}
+
+// Stop halts redraws, prints the final frame and restores the cursor.
 func (u *UI) Stop() {
 	close(u.stop)
 	u.wg.Wait()
-	u.tick(true)
+	u.tick()
+	if u.tty {
+		fmt.Fprint(u.out, "\x1b[?25h")
+	}
 }
 
 // Banner is plain ASCII so it survives any terminal and log capture.

@@ -148,6 +148,7 @@ func Main(args []string, out, errw io.Writer) int {
 			if f, ok := out.(*os.File); !ok || f != os.Stdout {
 				opts, tty = terminal.Options{Width: 80}, false
 			}
+			opts.Version, sopts = Version, opts
 			ui = terminal.New(out, tr, opts, tty, cfg.Terminal.Refresh)
 			ui.Start()
 		}}
@@ -235,7 +236,7 @@ func termOpts(out io.Writer, cfg *config.Config, plain bool) (terminal.Options, 
 func summary(w io.Writer, res *orchestrator.Result, showNew, showAll bool, db *storage.DB, o terminal.Options) {
 	r := res.Run
 	mark := map[model.Status]string{model.Success: "[OK]", model.Partial: "[!!] INCOMPLETE -", model.Failed: "[XX]", model.Cancelled: "[--]"}[res.Status]
-	fmt.Fprintf(w, "\n== Summary ==\nRun %s: %s %s (%s)\n", r.ID, terminal.Paint(o, terminal.StatusColor(string(res.Status))+terminal.Bold, mark), strings.ToUpper(string(res.Status)), terminal.Elapsed(r.Finished.Sub(r.Started)))
+	fmt.Fprintf(w, "\n%s\nRun %s: %s %s (%s)\n", terminal.Paint(o, terminal.Bold+terminal.Cyan, "== Summary =="), r.ID, terminal.Paint(o, terminal.StatusColor(string(res.Status))+terminal.Bold, mark), strings.ToUpper(string(res.Status)), terminal.Elapsed(r.Finished.Sub(r.Started)))
 	rows := make([][]string, 0, len(res.Stages))
 	for _, s := range res.Stages {
 		d := "-"
