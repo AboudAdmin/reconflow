@@ -1,217 +1,222 @@
-# ReconFlow
+# ⚡ ReconFlow
+### The Signal-Focused Reconnaissance Orchestrator
 
-**One target. One workflow. A clear picture of your attack surface.**
+**One target. One workflow. A clearer view of your attack surface.**
 
-ReconFlow is a Go-based reconnaissance orchestrator for authorized security testing. It connects existing recon tools into a dependency-aware pipeline, enforces scope rules, tracks findings across runs, and generates a self-contained HTML report.
+ReconFlow is a Go-based reconnaissance orchestrator designed to organize external recon tools into a structured, dependency-aware workflow. It helps you collect assets, track discoveries, compare runs, and generate a self-contained HTML report.
 
-Instead of manually chaining commands and comparing text files, use ReconFlow to organize your reconnaissance and understand what changed.
-
-> **Early-stage software — v0.1.0.** Automated tests use mock tools. Real tool compatibility and Linux/Kali runtime behavior have not yet been validated. Review the limitations before relying on results.
+> 🚧 **Early development — v0.1.0**
+>
+> Automated tests currently use mock tools. Real-tool compatibility and runtime behavior on Kali Linux have not yet been fully validated.
 
 ---
 
-## Why ReconFlow?
+## 🚀 Why ReconFlow?
 
-- **Automated workflow** — coordinate six established recon tools through one CLI.
-- **Scope-aware collection** — filter observations against explicit allow and deny rules.
-- **Change tracking** — compare successful runs and identify new or changed assets.
-- **Evidence and provenance** — store observations, tool outputs, and execution history in SQLite.
-- **JavaScript intelligence** — extract potentially interesting endpoints, parameters, GraphQL references, and WebSocket URLs.
-- **Readable results** — generate structured exports and a standalone HTML dashboard that works offline.
-- **Resumable runs** — use checkpoints to continue eligible interrupted or incomplete runs.
+- ⚙️ **Automated Workflow** — Run reconnaissance stages in dependency order.
+- 🎯 **Scope-Aware** — Validate target scope before execution.
+- 🔄 **Change Tracking** — Compare discoveries across runs.
+- 🧠 **Evidence & Provenance** — Keep track of where observations came from.
+- 🧩 **JavaScript Intelligence** — Organize JavaScript-related discoveries for further analysis.
+- 📊 **Interactive Reports** — Review results through a standalone HTML dashboard.
+- ⏯️ **Execution Management** — Inspect run status and resume supported interrupted runs.
 
-ReconFlow orchestrates existing tools; it is not a vulnerability scanner and does not confirm vulnerabilities.
+---
 
-## How it works
+## 🗺️ How It Works
+
+ReconFlow coordinates the workflow rather than replacing the underlying tools.
 
 ```mermaid
 flowchart TD
-    A["Target + Scope"] --> B["Validate configuration"]
-    B --> C["Discover and check tools"]
-    C --> D["Run recon pipeline"]
-    D --> E["Normalize and filter results"]
-    E --> F[("SQLite + Evidence")]
-    F --> G["Compare with baseline"]
-    G --> H["HTML Dashboard + Reports"]
+    A["🎯 Target & Scope"] --> B["✅ Scope Validation"]
+    B --> C["⚙️ Workflow Orchestrator"]
+    C --> D["🌐 Subdomain Discovery"]
+    D --> E["🔎 DNS Resolution"]
+    E --> F["🟢 HTTP Probing"]
+    F --> G["📦 URL Collection"]
+    G --> H["🕷️ Crawling & JS Discovery"]
+    H --> I["🧠 Normalize & Deduplicate"]
+    I --> J["🔄 Compare with Baseline"]
+    J --> K["📊 HTML Dashboard"]
+    J --> L["📄 JSON & Other Artifacts"]
+
+    classDef input fill:#172554,stroke:#60a5fa,color:#eff6ff
+    classDef process fill:#132e27,stroke:#34d399,color:#ecfdf5
+    classDef output fill:#312e81,stroke:#a5b4fc,color:#eef2ff
+
+    class A,B input
+    class C,D,E,F,G,H,I,J process
+    class K,L output
 ```
 
-## Integrated tools
+---
+
+## 🛠️ Integrated Tools
+
+ReconFlow orchestrates external tools; each must be installed and compatible with the relevant workflow stage.
 
 | Tool | Purpose |
 |---|---|
-| [Subfinder](https://github.com/projectdiscovery/subfinder) | Passive subdomain discovery |
+| [Subfinder](https://github.com/projectdiscovery/subfinder) | Subdomain discovery |
 | [dnsx](https://github.com/projectdiscovery/dnsx) | DNS resolution |
-| [httpx](https://github.com/projectdiscovery/httpx) | HTTP service probing |
-| [gau](https://github.com/lc/gau) | Historical URL discovery |
-| [waybackurls](https://github.com/tomnomnom/waybackurls) | URLs from the Wayback Machine |
+| [httpx](https://github.com/projectdiscovery/httpx) | HTTP probing and metadata |
+| [gau](https://github.com/lc/gau) | Historical URL collection |
+| [waybackurls](https://github.com/tomnomnom/waybackurls) | Wayback Machine URL collection |
 | [Katana](https://github.com/projectdiscovery/katana) | Web crawling |
 
-These tools must be installed separately. ReconFlow checks whether their executables appear compatible with the flags it uses; this check has not yet been validated against real installed versions.
+*Actual execution depends on the configured pipeline, installed binaries, and their availability.*
 
-**Important:** ProjectDiscovery's `httpx` is required, not the Python package with the same command name.
+---
 
-## Installation
+## 📥 Installation
 
 **Requirements**
-- Linux (Kali is the intended runtime; Windows is currently a development platform).
-- Go `1.27.0` or newer, as specified by `go.mod`.
-- Any external recon tools you want to use.
+- Linux environment — Kali Linux is the intended target.
+- Go `1.27.0+`, as declared by the project.
+- Git and the external tools required by your selected workflow.
 
-Clone the repository, enter its root directory, and install:
+### 1. Clone the repository
 
 ```bash
 git clone <YOUR-REPOSITORY-URL>
 cd reconflow
+```
 
+### 2. Install
+
+```bash
+chmod +x install.sh
 ./install.sh
 ```
 
-The installer builds ReconFlow and installs it to `~/.local/bin/reconflow`. It does not install the external tools.
+If the repository is already on your machine, skip the clone step. The installer is intended for Linux environments.
 
-If `reconflow` is not found, add the installation directory to your `PATH`:
-
-```bash
-echo 'export PATH="$HOME/.local/bin:$PATH"' >> ~/.bashrc
-source ~/.bashrc
-```
-
-Verify the installation:
+### 3. Build from source
 
 ```bash
-reconflow --version
-reconflow --help
-reconflow tools
+go build -o reconflow .
 ```
 
-You can also build from source without installing:
+> **Note:** Confirm the installer and required tool versions on your system before running a real engagement.
+
+---
+
+## ⚡ Quick Start
+
+Check the available options first:
 
 ```bash
-go build -o reconflow ./cmd/reconflow
-./reconflow tools
+./reconflow --help
 ```
 
-## Quick start
-
-Use only a domain you own or are explicitly authorized to test. Replace `example.com` with your authorized target.
-
-**1. Review the example files**
+Validate the target scope:
 
 ```bash
-cat configs/config.example.yaml
-cat configs/scope.example.yaml
+./reconflow validate-scope
 ```
 
-**2. Validate your scope**
+Run a passive workflow:
 
 ```bash
-reconflow validate-scope \
-  --scope configs/scope.example.yaml \
-  -d example.com
+./reconflow --passive
 ```
 
-Edit the example scope before using it on a real engagement. A validation failure must be resolved before proceeding.
-
-**3. Start with passive reconnaissance**
+Start a fresh run:
 
 ```bash
-reconflow -d example.com \
-  --scope configs/scope.example.yaml \
-  --passive
+./reconflow --new
 ```
 
-Passive mode runs the configured passive-capable stages. It does not intentionally probe the target directly, but it can query third-party data sources.
-
-**4. Run the broader pipeline**
+Generate a report:
 
 ```bash
-reconflow -d example.com \
-  --scope configs/scope.example.yaml \
-  --new
+./reconflow report
 ```
 
-The broader pipeline may perform DNS queries, HTTP probes, crawling, and in-scope JavaScript downloads. Review your authorization and scope first.
+**Important:** These commands illustrate the intended CLI workflow. Check `--help` and the project configuration for the exact arguments required by your current build.
 
-**5. Open the report**
+---
 
-```bash
-reconflow report -d example.com
-```
+## 📊 Results & Dashboard
 
-Open `latest.html` from the target's reports directory in your browser. The dashboard is self-contained and works offline.
+ReconFlow organizes results into machine-readable artifacts and a standalone HTML report.
 
-## What you get
-
-ReconFlow stores its data under `~/.reconflow` by default.
-
-| Output | What it contains |
+| Output | Purpose |
 |---|---|
-| `latest.html` | Interactive offline dashboard |
-| `latest.json` | Structured report |
-| `execution.json` | Run, stage, tool, and error details |
-| `coverage.json` | Comparison coverage and limitations |
-| JSONL inventories | Machine-readable assets and URLs |
-| Text change lists | New, changed, and not-seen items when a baseline exists |
-| SQLite database | Historical observations, provenance, and run state |
+| `latest.html` | Interactive HTML dashboard |
+| `latest.json` | Consolidated report data |
+| `execution.json` | Execution details |
+| `coverage.json` | Workflow coverage information |
+| JSONL inventories | Structured, line-by-line observations |
+| Text change lists | Review newly observed or changed assets |
+| SQLite database | Persistent structured data |
 
-The dashboard includes:
+### Dashboard Highlights
 
-- Overview and run status
-- Discovered assets and URLs
-- JavaScript analysis leads
-- API-related references
-- Changes against a baseline
-- Tool execution and errors
-- Comparison coverage and report artifacts
+- 📈 Review asset and workflow summaries.
+- 🔍 Explore collected observations.
+- 🧾 Inspect supporting evidence and provenance.
+- 🔄 Review changes between runs.
+- 📤 Use structured output for further analysis.
 
-ReconFlow distinguishes missing observations from confirmed removals. **It does not currently confirm that an asset has been removed.**
+The report is designed to work locally without requiring a hosted dashboard.
 
-## Useful commands
+---
 
-| Command | Purpose |
+## 🧰 Useful Commands
+
+| Option / Command | Purpose |
 |---|---|
-| `reconflow --help` | Show CLI usage |
-| `reconflow tools` | Check external tool availability |
-| `reconflow validate-scope --scope scope.yaml -d example.com` | Validate scope |
-| `reconflow -d example.com --passive` | Run passive-capable stages |
-| `reconflow -d example.com --new` | Show new items after a run |
-| `reconflow -d example.com --all` | Print the current inventory |
-| `reconflow -d example.com --status` | Check the latest run status |
-| `reconflow -d example.com --resume` | Resume an eligible incomplete run |
-| `reconflow report -d example.com` | Regenerate reports without running recon tools |
+| `--help` | Display CLI usage |
+| `tools` | Inspect tool-related information |
+| `validate-scope` | Validate configured scope |
+| `--passive` | Select passive workflow mode |
+| `--new` | Start a fresh run |
+| `--all` | Select the full workflow |
+| `--status` | Inspect execution status |
+| `--resume` | Resume a supported run |
+| `report` | Generate a report |
 
-For custom paths, rate limits, timeouts, and stage selection, start with `configs/config.example.yaml`.
+Refer to the current CLI help for required arguments and supported combinations.
 
-## Scope and responsible use
+---
 
-ReconFlow uses a **default-deny** scope policy when an explicit scope file is provided. Exclusions take precedence over inclusions, and discovered data does not automatically expand the authorized scope.
+## 🛡️ Scope & Responsible Use
 
-Scope filtering is not a guarantee that every external tool will restrict all of its own DNS or network behavior. Review the scope, tool configuration, and program rules before each run.
+ReconFlow is intended for authorized security research.
 
-- Test only assets you own or have explicit permission to assess.
-- Respect program policies, rate limits, and third-party service terms.
-- Treat JavaScript indicators as unverified leads, not vulnerabilities.
-- Protect reports and databases, which may contain sensitive information.
+- ✅ Validate the permitted targets before running.
+- 🔒 Follow the configured scope restrictions.
+- 🚫 Exclusions take precedence over inclusions.
+- 🧭 Discovering an asset does not automatically authorize testing it.
+- ⚠️ External tools may perform their own DNS requests and network activity.
+- 🔎 Treat collected indicators as leads for investigation, not confirmed vulnerabilities.
 
-## Project status and limitations
+**Only run reconnaissance against systems you own or have explicit permission to assess.**
 
-ReconFlow is under active development. The current implementation has automated tests built around mock tools, but the following remain unverified:
+---
 
-- Runtime behavior on Linux/Kali.
-- Compatibility with real installed versions of all six external tools.
-- End-to-end reconnaissance against an authorized real target.
+## 🧪 Project Status
 
-Other current limitations:
+ReconFlow is under active development.
 
-- No integrated port scanner, TLS inventory tool, or vulnerability scanner.
-- JavaScript analysis is regex-based; extracted indicators require manual verification.
-- No live web dashboard or automatic data-retention/cleanup command.
-- No confirmed asset-removal detection.
+| Area | Current status |
+|---|---|
+| Workflow orchestration | Implemented; integration validation remains |
+| Automated testing | Mock-tool tests |
+| Real external-tool compatibility | Not fully validated |
+| Kali Linux runtime | Not yet fully validated |
+| HTML dashboard | Implemented; real-run validation remains |
+| Vulnerability verification | Not a substitute for manual validation |
 
-Treat early runs as trials and verify the results independently.
+ReconFlow is a reconnaissance workflow manager, **not a guarantee of vulnerability discovery**. Port scanning, TLS analysis, and vulnerability scanning should not be assumed unless explicitly implemented and configured.
 
-## Development
+---
 
-Run these commands from the repository root:
+## 👨‍💻 Development
+
+Useful project checks:
 
 ```bash
 make fmt
@@ -220,10 +225,22 @@ make test
 make build
 ```
 
-The project is organized into packages for the CLI, configuration, scope validation, orchestration, scheduling, tool adapters, storage, comparison, JavaScript analysis, reporting, and terminal output.
+For implementation details, architecture, and technical decisions, see [`docs/IMPLEMENTATION.md`](docs/IMPLEMENTATION.md).
 
-See [`docs/IMPLEMENTATION.md`](docs/IMPLEMENTATION.md) for the implementation checklist and design notes.
+---
 
-## License
+## 📄 License
 
-No license file is currently present. Until a license is added to the repository, do not assume that the code is licensed for redistribution or reuse.
+Check the repository for its `LICENSE` file before redistributing or reusing the project. If no license is present, usage and redistribution permissions should not be assumed.
+
+---
+
+<div align="center">
+
+**⚡ ReconFlow**
+
+*Less noise. Better visibility. More structured reconnaissance.*
+
+Built for a more organized bug bounty workflow.
+
+</div>
