@@ -138,6 +138,7 @@ func Main(args []string, out, errw io.Writer) int {
 	defer stop()
 	tr := model.NewTracker(target, "", nil)
 	var ui *terminal.UI
+	var sopts terminal.Options
 	o := orchestrator.Options{Target: target, Passive: passive, Resume: resume, Cfg: cfg, Scope: pol, DB: db, Tracker: tr, Version: Version,
 		OnPlan: func(string, *model.Tracker) {
 			opts, tty := terminal.Detect(os.Stdout, cfg.Terminal.Color, cfg.Terminal.Unicode)
@@ -165,7 +166,7 @@ func Main(args []string, out, errw io.Writer) int {
 		fmt.Fprintf(errw, "error: %v\n", err)
 		return ExitInternal
 	}
-	summary(out, res, showNew, showAll, db)
+	summary(out, res, showNew, showAll, db, sopts)
 	switch {
 	case res.Status == model.Cancelled:
 		return ExitCancelled
@@ -219,11 +220,39 @@ func setup(domain, cfgPath, scopePath string, errw io.Writer) (*config.Config, s
 
 func fileExists(p string) bool { st, err := os.Stat(p); return err == nil && !st.IsDir() }
 
-func summary(w io.Writer, res *orchestrator.Result, showNew, showAll bool, db *storage.DB) {
+// termOpts decides colors/unicode for the live view and the final summary.
+func termOpts(out io.Writer, cfg *config.Config, plain bool) (terminal.Options, bool) {
+	opts, tty := terminal.Detect(os.Stdout, cfg.Terminal.Color, cfg.Terminal.Unicode)
+	if plain {
+		return terminal.Options{Width: opts.Width}, false
+	}
+	if f, ok := out.(*os.File); !ok || f != os.Stdout {
+		return terminal.Options{Width: 80}, false
+	}
+	return opts, tty
+}
+
+func summary(w io.Writer, res *orchestrator.Result, showNew, showAll bool, db *storage.DB, o terminal.Options) {
 	r := res.Run
-	fmt.Fprintf(w, "\n== Summary ==\nRun %s: %s (%s)\n", r.ID, strings.ToUpper(string(res.Status)), terminal.Elapsed(r.Finished.Sub(r.Started)))
+	mark := map[model.Status]string{model.Success: "[OK]", model.Partial: "[!!] INCOMPLETE -", model.Failed: "[XX]", model.Cancelled: "[--]"}[res.Status]
+	fmt.Fprintf(w, "\n== Summary ==\nRun %s: %s %s (%s)\n", r.ID, terminal.Paint(o, terminal.StatusColor(string(res.Status))+terminal.Bold, mark), strings.ToUpper(string(res.Status)), terminal.Elapsed(r.Finished.Sub(r.Started)))
+	rows := make([][]string, 0, len(res.Stages))
+	for _, s := range res.Stages {
+		d := "-"
+		if !s.Started.IsZero() && !s.Finished.IsZero() {
+			d = terminal.Elapsed(s.Finished.Sub(s.Started))
+		}
+		rows = append(rows, []string{s.ID, strings.ToUpper(s.Status), fmt.Sprint(s.Outputs), d})
+	}
+	fmt.Fprintln(w)
+	terminal.Table(w, o, []string{"STAGE", "STATUS", "RECORDS", "TIME"}, rows, 1)
+	fmt.Fprintln(w)
 	if c, err := db.Counts(r.ID); err == nil {
 		fmt.Fprintf(w, "Subdomains %d | DNS %d | Live services %d | URLs %d\n", c["subdomain"], c["dns"], c["service"], c["url"])
+	}
+	if s := res.Summary; s != nil {
+		fmt.Fprintf(w, "Leads: %s high, %s medium, %s low  (API endpoints: %d)\n", terminal.Paint(o, terminal.Red, fmt.Sprint(s["leads_high"])),
+			terminal.Paint(o, terminal.Yellow, fmt.Sprint(s["leads_medium"])), fmt.Sprint(s["leads_low"]), s["urls_api"])
 	}
 	if res.Diff != nil {
 		if !res.Diff.Established {
@@ -283,7 +312,13 @@ func summary(w io.Writer, res *orchestrator.Result, showNew, showAll bool, db *s
 	if res.ReportErr != nil {
 		fmt.Fprintf(w, "Report generation error: %v\n", res.ReportErr)
 	}
+	fmt.Fprintln(w, "\nWhere your results are:")
+	fmt.Fprintf(w, "  Clean lists   %s  (subdomains, live_hosts, urls, js_files, api_endpoints, findings)\n", res.Layout.Norm)
+	fmt.Fprintf(w, "  Raw evidence  %s\n", filepath.Join(r.OutDir, "raw"))
 	fmt.Fprintf(w, "Run directory: %s\n", r.OutDir)
+	if res.Status != model.Success && res.Status != model.Cancelled {
+		fmt.Fprintln(w, "Next: fix the stages marked ! above, then `reconflow -d "+r.Target+" --resume` re-runs only unfinished stages.")
+	}
 }
 
 func printStatus(db *storage.DB, target string, w io.Writer) int {
@@ -389,7 +424,7 @@ func cmdReport(args []string, out, errw io.Writer) int {
 		fmt.Fprintln(errw, "error:", err)
 		return ExitInternal
 	}
-	arts, err := reporting.Generate(reporting.Input{DB: db, Run: run, Diff: d, ReportsDir: lay.Reports, JSDir: lay.JS, JSONL: cfg.Reports.JSONL, HTML: cfg.Reports.HTML, Now: time.Now().UTC()})
+	arts, err := reporting.Generate(reporting.Input{DB: db, Run: run, Diff: d, ReportsDir: lay.Reports, JSDir: lay.JS, RunDir: lay.RunDir(run.ID), NormDir: lay.Norm, JSONL: cfg.Reports.JSONL, HTML: cfg.Reports.HTML, Now: time.Now().UTC()})
 	if err != nil {
 		fmt.Fprintln(errw, "error:", err)
 		return ExitInternal

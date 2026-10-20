@@ -266,68 +266,42 @@ func (s *state) runTool(ctx context.Context, d StageDef, attempt int) stageResul
 	}
 	raw := filepath.Join(s.lay.RunDir(s.run.ID), "raw", d.ID+".out")
 	res.artifact = raw
-	b := &batcher{s: s, stage: d.ID, last: time.Now()}
-	var bad, parsed int
-	var limitHit bool
-	var firstBad string
 	cctx, cancel := context.WithCancel(ctx)
 	defer cancel()
+	k := newSink(s, d, in, cancel)
+	k.dropped = res.dropped
+	if d.ID == "katana" {
+		in.Has = info.Has
+		return s.runCrawl(ctx, cctx, d, info, in, k, res)
+	}
 	spec := runner.Spec{
 		Path: info.Path, Args: a.Args(in), Dir: s.lay.RunDir(s.run.ID), Timeout: cfg.StageTimeout(d.ID), Grace: cfg.Timeouts.Grace,
-		MaxRaw: cfg.Limits.MaxOutputBytes, MaxLine: cfg.Limits.MaxLineBytes, RawPath: raw,
-		OnLine: func(line []byte) {
-			obs, err := a.Parse(line, in)
-			if err != nil {
-				bad++
-				if firstBad == "" {
-					firstBad = err.Error()
-				}
-				return
-			}
-			for _, o := range obs {
-				parsed++
-				if !s.inScope(o) {
-					res.dropped++
-					continue
-				}
-				if b.persist+len(b.buf) >= cfg.Limits.MaxRecords {
-					limitHit = true
-					cancel()
-					return
-				}
-				o.Tool, o.ObservedAt = d.ID, time.Now().UTC()
-				if o.Input == "" {
-					o.Input = s.o.Target
-				}
-				b.add(o)
-			}
-		},
+		MaxRaw: cfg.Limits.MaxOutputBytes, MaxLine: cfg.Limits.MaxLineBytes, RawPath: raw, OnLine: k.onLine,
 	}
 	s.log.Info("exec", "stage", d.ID, "path", info.Path, "args", logging.Redact(strings.Join(spec.Args, " ")), "attempt", attempt)
 	rr := runner.Run(cctx, spec)
-	b.flush()
-	res.outputs = b.persist
-	res.exit = rr.ExitCode
-	if b.err != nil {
-		res.status, res.detail = model.Failed, "database error: "+b.err.Error()
+	k.finish()
+	res.outputs, res.dropped, res.exit = k.b.persist, k.dropped, rr.ExitCode
+	s.writeMeta(d.ID, map[string]any{"args": logging.Redact(strings.Join(spec.Args, " ")), "exit_code": rr.ExitCode, "timed_out": rr.TimedOut,
+		"raw_truncated": rr.Truncated, "lines": rr.Lines, "long_lines_dropped": rr.LongLines, "bytes": rr.Bytes, "stderr": logging.Redact(rr.Stderr),
+		"parsed": k.parsed, "unparseable": k.bad, "filtered": k.filtered, "persisted": k.b.persist})
+	if k.b.err != nil {
+		res.status, res.detail = model.Failed, "database error: "+k.b.err.Error()
 		return res
 	}
-	note := ""
+	note := k.note()
 	if rr.Truncated {
-		note = "; raw evidence file truncated at max_output_bytes"
+		note += "; raw evidence file truncated at max_output_bytes"
 	}
 	if rr.LongLines > 0 {
 		note += fmt.Sprintf("; %d over-long lines dropped", rr.LongLines)
-	}
-	if res.dropped > 0 {
-		note += fmt.Sprintf("; %d out-of-scope/ineligible records dropped", res.dropped)
 	}
 	switch {
 	case ctx.Err() != nil:
 		res.status, res.detail = model.Cancelled, "cancelled"
 	case rr.Err != nil:
 		res.status, res.detail = model.Failed, "could not run tool: "+rr.Err.Error()
-	case limitHit:
+	case k.limitHit:
 		res.status, res.detail = model.Partial, fmt.Sprintf("stopped at max_records_per_stage=%d%s", cfg.Limits.MaxRecords, note)
 	case rr.TimedOut:
 		res.status = model.Partial
@@ -342,10 +316,10 @@ func (s *state) runTool(ctx context.Context, d StageDef, attempt int) stageResul
 		}
 		res.retryable = adapters.Transient(rr.Stderr, rr.ExitCode)
 		res.detail = fmt.Sprintf("exit code %d: %s%s", rr.ExitCode, strings.TrimSpace(logging.Redact(rr.Stderr)), note)
-	case bad > 0 && parsed == 0:
-		res.status, res.detail = model.Failed, fmt.Sprintf("output could not be parsed (%d bad lines, first: %s)", bad, firstBad)
-	case bad > 0:
-		res.status, res.detail = model.Partial, fmt.Sprintf("%d unparseable lines (first: %s)%s", bad, firstBad, note)
+	case k.bad > 0 && k.parsed == 0:
+		res.status, res.detail = model.Failed, fmt.Sprintf("output could not be parsed (%d bad lines, first: %s)", k.bad, k.firstBad)
+	case k.bad > 0:
+		res.status, res.detail = model.Partial, fmt.Sprintf("%d unparseable lines (first: %s)%s", k.bad, k.firstBad, note)
 	case rr.Lines == 0:
 		res.status, res.detail = model.Success, "tool produced no output (empty result)"+note
 	default:

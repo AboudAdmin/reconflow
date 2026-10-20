@@ -74,7 +74,14 @@ func Render(s model.Snapshot, o Options, now time.Time) string {
 	if o.Unicode {
 		rule = "━"
 	}
-	line(bold+cyan, "RECONFLOW")
+	if o.Width >= 50 {
+		for _, l := range Banner {
+			line(bold+cyan, l)
+		}
+		line(gray, "recon that separates signal from noise")
+	} else {
+		line(bold+cyan, "RECONFLOW")
+	}
 	line(gray, strings.Repeat(rule, minInt(o.Width-1, 60)))
 	line("", "Target: "+s.Target)
 	line("", "Run:    "+s.RunID)
@@ -98,6 +105,7 @@ func Render(s model.Snapshot, o Options, now time.Time) string {
 	if len(cur) > 0 {
 		curStage = strings.Join(cur, ", ")
 	}
+	line("", "Progress "+Bar(done, len(s.Stages), 28, o.Unicode))
 	line("", "Elapsed: "+Elapsed(now.Sub(s.Started)))
 	line("", "Stage:   "+curStage)
 	line("", fmt.Sprintf("Completed stages: %d/%d   Active tool processes: %d   Retries: %d", done, len(s.Stages), running, retries))
@@ -275,4 +283,82 @@ func (u *UI) Stop() {
 	close(u.stop)
 	u.wg.Wait()
 	u.tick(true)
+}
+
+// Banner is plain ASCII so it survives any terminal and log capture.
+var Banner = []string{
+	` ___                    ___ _`,
+	`| _ \___ __ ___ _ _    | __| |_____ __ __`,
+	`|   / -_) _/ _ \ ' \   | _|| / _ \ V  V /`,
+	`|_|_\___\__\___/_||_|  |_| |_\___/\_/\_/`,
+}
+
+// Bar renders "[#####-----] 2/4 50%" (or block characters with unicode).
+func Bar(done, total, width int, unicode bool) string {
+	if total <= 0 {
+		return ""
+	}
+	fill := done * width / total
+	on, off := "#", "-"
+	if unicode {
+		on, off = "█", "░"
+	}
+	return fmt.Sprintf("[%s%s] %d/%d  %d%%", strings.Repeat(on, fill), strings.Repeat(off, width-fill), done, total, done*100/total)
+}
+
+// Paint wraps text in a color when the terminal supports it.
+func Paint(o Options, color, text string) string {
+	if !o.Color {
+		return text
+	}
+	return color + text + reset
+}
+
+// Colors for callers that print their own summaries.
+const (
+	Green, Yellow, Red, Cyan, Gray, Bold = green, yellow, red, cyan, gray, bold
+)
+
+// StatusColor maps a status word to its color.
+func StatusColor(status string) string {
+	if t, ok := tags[model.Status(status)]; ok {
+		return t.color
+	}
+	return ""
+}
+
+// Table prints rows aligned to the widest cell per column (cells are never wrapped).
+func Table(w io.Writer, o Options, header []string, rows [][]string, colorCol int) {
+	width := make([]int, len(header))
+	for i, h := range header {
+		width[i] = utf8.RuneCountInString(h)
+	}
+	for _, r := range rows {
+		for i, c := range r {
+			width[i] = maxInt(width[i], utf8.RuneCountInString(c))
+		}
+	}
+	cell := func(i int, c string, paint string) string {
+		pad := strings.Repeat(" ", width[i]-utf8.RuneCountInString(c))
+		if paint != "" {
+			c = Paint(o, paint, c)
+		}
+		return c + pad
+	}
+	var hb strings.Builder
+	for i, h := range header {
+		hb.WriteString(cell(i, h, bold) + "  ")
+	}
+	fmt.Fprintln(w, strings.TrimRight(hb.String(), " "))
+	for _, r := range rows {
+		var rb strings.Builder
+		for i, c := range r {
+			p := ""
+			if i == colorCol {
+				p = StatusColor(strings.ToLower(c))
+			}
+			rb.WriteString(cell(i, c, p) + "  ")
+		}
+		fmt.Fprintln(w, strings.TrimRight(rb.String(), " "))
+	}
 }

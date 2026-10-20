@@ -233,6 +233,24 @@ func (d *DB) LatestRun(targetID int64) (*Run, error) {
 	return r, err
 }
 
+// RecentRuns returns up to limit runs for a target, newest first.
+func (d *DB) RecentRuns(targetID int64, limit int) ([]Run, error) {
+	rows, err := d.sql.Query(`SELECT `+runCols+` FROM runs r JOIN targets t ON t.id=r.target_id WHERE r.target_id=? ORDER BY r.started_at DESC LIMIT ?`, targetID, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []Run
+	for rows.Next() {
+		r, err := scanRun(rows)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, *r)
+	}
+	return out, rows.Err()
+}
+
 // Baseline selects the newest fully successful run for the same target, scope
 // policy and passive/active mode that started before `before`. Partial,
 // failed and cancelled runs are never baselines.

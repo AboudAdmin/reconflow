@@ -10,7 +10,7 @@ import (
 // Layout is the on-disk structure for one target. Everything lives under
 // <data_dir>/targets/<target>/ and every directory is created 0700.
 type Layout struct {
-	Root, Target, Runs, JS, JSFiles, Reports, Logs string
+	Root, Target, Runs, JS, JSFiles, Reports, Logs, Norm string
 }
 
 func safeName(target string) string {
@@ -35,8 +35,8 @@ func NewLayout(dataDir, target string) (Layout, error) {
 		return Layout{}, fmt.Errorf("unsafe target path for %q", target)
 	}
 	l := Layout{Root: dataDir, Target: t, Runs: filepath.Join(t, "runs"), JS: filepath.Join(t, "javascript"),
-		JSFiles: filepath.Join(t, "javascript", "files"), Reports: filepath.Join(t, "reports"), Logs: filepath.Join(t, "logs")}
-	for _, d := range []string{dataDir, root, t, l.Runs, l.JS, l.JSFiles, l.Reports, l.Logs} {
+		JSFiles: filepath.Join(t, "javascript", "files"), Reports: filepath.Join(t, "reports"), Logs: filepath.Join(t, "logs"), Norm: filepath.Join(t, "normalized")}
+	for _, d := range []string{dataDir, root, t, l.Runs, l.JS, l.JSFiles, l.Reports, l.Logs, l.Norm} {
 		if err := EnsureDir(d); err != nil {
 			return l, err
 		}

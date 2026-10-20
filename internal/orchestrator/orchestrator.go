@@ -60,6 +60,7 @@ type Result struct {
 	Tools     []adapters.Info
 	NoTools   bool // every tool-backed stage was unavailable
 	ReportErr error
+	Summary   map[string]int // leads_*, urls_* counts from the generated report
 }
 
 type StageDef struct {
@@ -431,9 +432,17 @@ func Run(ctx context.Context, o Options) (*Result, error) {
 		})
 	}
 	res.Stages, _ = o.DB.Stages(run.ID)
-	arts, rerr := reporting.Generate(reporting.Input{DB: o.DB, Run: run, Diff: res.Diff, ReportsDir: lay.Reports, JSDir: lay.JS,
+	arts, rerr := reporting.Generate(reporting.Input{DB: o.DB, Run: run, Diff: res.Diff, ReportsDir: lay.Reports, JSDir: lay.JS, RunDir: lay.RunDir(run.ID), NormDir: lay.Norm,
 		JSONL: cfg.Reports.JSONL, HTML: cfg.Reports.HTML, Now: time.Now().UTC()})
 	res.Reports, res.ReportErr = arts, rerr
+	if b, err := os.ReadFile(filepath.Join(lay.Norm, "manifest.json")); err == nil {
+		var m struct {
+			Summary map[string]int `json:"summary"`
+		}
+		if json.Unmarshal(b, &m) == nil {
+			res.Summary = m.Summary
+		}
+	}
 	for _, a := range arts {
 		o.DB.AddArtifact(run.ID, a)
 	}

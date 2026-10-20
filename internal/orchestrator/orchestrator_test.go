@@ -465,3 +465,67 @@ func TestDatabaseReopenKeepsRun(t *testing.T) {
 		t.Fatalf("%v %+v", err, r)
 	}
 }
+
+func TestCrawlFiltersNoiseBeforeBudgetAndKeepsEvidence(t *testing.T) {
+	e := newEnv(t)
+	var out []string
+	rec := func(u string) string {
+		b, _ := json.Marshal(map[string]any{"request": map[string]any{"endpoint": u, "source": "http://a.example.test/"}})
+		return string(b)
+	}
+	for i := 0; i < 30; i++ {
+		out = append(out, rec(fmt.Sprintf("http://a.example.test/item?id=%d", i)))
+	}
+	out = append(out, rec("http://a.example.test/logo.png"), rec("http://a.example.test/site.css"), rec("http://a.example.test/api/v1/users"))
+	e.tools["katana"] = testutil.Behavior{Stdout: out}
+	e.install()
+	e.cfg.Limits.MaxRecords = 20 // would be exhausted by noise if static/variants counted against it
+	res, err := e.run(context.Background(), false, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	k := stageMap(res)["katana"]
+	if k.Status != "success" {
+		t.Fatalf("noise must not trip the record limit: %+v", k)
+	}
+	for _, want := range []string{"2 static resources filtered", "parameter/ID variants collapsed", "all kept in raw evidence", "2/2 hosts crawled fully"} {
+		if !strings.Contains(k.Error, want) {
+			t.Errorf("detail lacks %q: %s", want, k.Error)
+		}
+	}
+	raw, _ := os.ReadFile(k.Artifact)
+	if !strings.Contains(string(raw), "logo.png") || strings.Count(string(raw), "item?id=") < 30 {
+		t.Error("raw evidence must keep every line the tool printed")
+	}
+	urls := 0
+	ents, _ := e.db.RunEntities(res.Run.ID)
+	for _, en := range ents {
+		if en.Kind == "url" && strings.Contains(en.Key, "/item") {
+			urls++
+		}
+	}
+	if urls != e.cfg.Limits.MaxPerShape {
+		t.Errorf("want %d sample variants, got %d", e.cfg.Limits.MaxPerShape, urls)
+	}
+}
+
+func TestCrawlHostBudgetIsReportedNotHidden(t *testing.T) {
+	e := newEnv(t)
+	e.tools["katana"] = testutil.Behavior{SleepMS: 4000, Stdout: []string{"http://a.example.test/slow"}}
+	e.install()
+	e.cfg.Crawl.HostBudget = 600 * time.Millisecond
+	res, err := e.run(context.Background(), false, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	k := stageMap(res)["katana"]
+	if k.Status != "partial" || !strings.Contains(k.Error, "hit the") || !strings.Contains(k.Error, "0/2 hosts crawled fully") {
+		t.Fatalf("a host that exhausted its budget must make the stage partial and be named: %+v", k)
+	}
+	if k.Comparable {
+		t.Error("a budget-limited crawl must not be comparable")
+	}
+	if _, err := os.Stat(filepath.Join(res.Run.OutDir, "raw", "katana.meta.json")); err != nil {
+		t.Error("per-host crawl record missing")
+	}
+}

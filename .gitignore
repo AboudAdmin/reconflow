@@ -2,3 +2,5 @@
 /reconflow.exe
 dist/
 .scratch-e2e/
+dashboard/node_modules/
+dashboard/dist/

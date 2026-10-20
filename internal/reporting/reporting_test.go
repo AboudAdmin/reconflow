@@ -124,11 +124,12 @@ func TestHTMLEscapesUntrustedValues(t *testing.T) {
 	if !strings.Contains(page, `</script>`) {
 		t.Error("hostile value should be present only in escaped form")
 	}
-	if strings.Contains(page, "innerHTML") && !strings.Contains(page, "// All values are untrusted") {
-		t.Error("dashboard must not use innerHTML")
-	}
-	if strings.Contains(strings.ReplaceAll(page, "never innerHTML", ""), ".innerHTML") {
-		t.Error("dashboard code uses innerHTML")
+	// The React bundle itself mentions innerHTML (react-dom internals); our own source must never opt in.
+	src, _ := filepath.Glob("../../dashboard/src/*")
+	for _, f := range src {
+		if b, _ := os.ReadFile(f); strings.Contains(string(b), "dangerouslySetInnerHTML") || strings.Contains(string(b), ".innerHTML") {
+			t.Errorf("%s renders raw HTML", f)
+		}
 	}
 	// the embedded block must be valid JSON
 	start := strings.Index(page, `type="application/json">`) + len(`type="application/json">`)
@@ -150,5 +151,55 @@ func TestEmbeddedRowCap(t *testing.T) {
 	}
 	if len(r.URLs) != MaxEmbeddedRows+5 {
 		t.Error("BuildHTML must not mutate the report used for JSON exports")
+	}
+}
+
+func TestNormalizedOutputsAreCleanAndHonest(t *testing.T) {
+	in, dir := fixture(t, true)
+	in.RunDir, in.NormDir = filepath.Join(dir, "run"), filepath.Join(dir, "norm")
+	os.MkdirAll(filepath.Join(in.RunDir, "raw"), 0o755)
+	os.WriteFile(filepath.Join(in.RunDir, "raw", "katana.meta.json"), []byte(`{"stage":"katana","filtered":{"static":7}}`), 0o644)
+	in.DB.Persist("cur", in.Run.TargetID, []model.Obs{
+		{Kind: "url", Key: "https://example.com/api/v1/users", Tool: "katana", ObservedAt: in.Now, Meta: map[string]any{"origin": "crawled"}},
+		{Kind: "url", Key: "https://example.com/actuator/env?redirect=/x", Tool: "gau", ObservedAt: in.Now, Meta: map[string]any{"origin": "historical"}},
+		{Kind: "service", Key: "https://ci.example.com", Tool: "httpx", ObservedAt: in.Now, Attrs: map[string]any{"title": "Dashboard [Jenkins]"}}})
+	if _, err := Generate(in); err != nil {
+		t.Fatal(err)
+	}
+	for _, d := range []string{filepath.Join(in.RunDir, "normalized"), in.NormDir} {
+		for _, f := range []string{"subdomains.txt", "live_hosts.txt", "urls.txt", "js_files.txt", "api_endpoints.txt", "findings.jsonl", "findings.md", "manifest.json"} {
+			if _, err := os.Stat(filepath.Join(d, f)); err != nil {
+				t.Errorf("%s missing in %s", f, d)
+			}
+		}
+	}
+	read := func(n string) string {
+		b, _ := os.ReadFile(filepath.Join(in.RunDir, "normalized", n))
+		return string(b)
+	}
+	if !strings.Contains(read("api_endpoints.txt"), "/api/v1/users") {
+		t.Error("API URL missing from api_endpoints.txt")
+	}
+	fm := read("findings.md")
+	for _, w := range []string{"Jenkins", "actuator", "None is a confirmed vulnerability"} {
+		if !strings.Contains(fm, w) {
+			t.Errorf("findings.md lacks %q", w)
+		}
+	}
+	if strings.Index(fm, "Jenkins") > strings.Index(fm, "redirect") && strings.Contains(fm, "## LOW") && strings.Index(fm, "## HIGH") > strings.Index(fm, "## LOW") {
+		t.Error("high priority leads must come first")
+	}
+	var man struct {
+		Complete bool                      `json:"complete"`
+		Filtered map[string]map[string]int `json:"filtered_not_stored"`
+	}
+	if err := json.Unmarshal([]byte(read("manifest.json")), &man); err != nil {
+		t.Fatal(err)
+	}
+	if man.Filtered["katana"]["static"] != 7 {
+		t.Errorf("filter counts not carried into manifest: %+v", man.Filtered)
+	}
+	if _, err := os.Stat(filepath.Join(in.RunDir, "report.json")); err != nil {
+		t.Error("per-run report.json missing")
 	}
 }

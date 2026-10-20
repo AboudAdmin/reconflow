@@ -27,7 +27,11 @@ limits:
   max_line_bytes: 1048576
   max_records_per_stage: 200000
   js_download_bytes: 5242880
-crawl: {depth: 2}
+  max_urls_per_shape: 5                 # /item?id=1..N keeps 5 samples; the rest stay in raw evidence, counted
+crawl:
+  depth: 2
+  parallel: 3                           # hosts crawled at once (rate limit is split between them)
+  host_budget: 3m                       # per-host crawl budget; hosts that hit it are listed as partial
 javascript:
   enabled: true                         # direct download of in-scope .js (never in --passive)
   workers: 4

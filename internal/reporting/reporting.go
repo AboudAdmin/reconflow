@@ -36,6 +36,8 @@ type Input struct {
 	ReportsDir, JSDir string
 	JSONL, HTML       bool
 	Now               time.Time
+	RunDir            string // runs/<id>; enables normalized files, per-run report.json and filter counts
+	NormDir           string // <target>/normalized: mirror of the newest run's normalized files
 }
 
 type RunInfo struct {
@@ -100,6 +102,8 @@ type URLRow struct {
 	Sources []string `json:"sources"`
 	Params  []string `json:"params"`
 	IsJS    bool     `json:"is_js"`
+	Class   string   `json:"class"` // api | js | sourcemap | page (static resources are filtered upstream)
+	Score   int      `json:"score"` // attention rank, see internal/triage
 }
 
 type JSRow struct {
@@ -121,6 +125,8 @@ type CandRow struct {
 	Verification string   `json:"verification"`
 	State        string   `json:"state"`
 	SourceURLs   []string `json:"source_urls"`
+	Class        string   `json:"class"` // api | route | inscope | thirdparty | param | weak | static | other
+	Score        int      `json:"score"`
 }
 
 type ChangeRow struct {
@@ -145,25 +151,29 @@ type Comparison struct {
 }
 
 type Report struct {
-	Schema      string            `json:"schema"`
-	GeneratedAt string            `json:"generated_at"`
-	Run         RunInfo           `json:"run"`
-	Baseline    string            `json:"baseline_run_id"`
-	Comparison  Comparison        `json:"comparison"`
-	Summary     map[string]int    `json:"summary"`
-	Stages      []StageInfo       `json:"stages"`
-	Tools       []ToolInfo        `json:"tools"`
-	Errors      []ErrInfo         `json:"errors"`
-	Assets      []AssetRow        `json:"assets"`
-	URLs        []URLRow          `json:"urls"`
-	JS          []JSRow           `json:"javascript"`
-	JSFetches   []storage.JSFetch `json:"javascript_fetches"`
-	Cands       []CandRow         `json:"js_candidates"`
-	Changes     []ChangeRow       `json:"changes"`
-	Coverage    []KindCoverage    `json:"coverage"`
-	Artifacts   []string          `json:"artifacts"`
-	Truncated   map[string]int    `json:"html_truncated"`
-	Notes       []string          `json:"notes"`
+	Schema      string                    `json:"schema"`
+	GeneratedAt string                    `json:"generated_at"`
+	Run         RunInfo                   `json:"run"`
+	Baseline    string                    `json:"baseline_run_id"`
+	Comparison  Comparison                `json:"comparison"`
+	Summary     map[string]int            `json:"summary"`
+	Stages      []StageInfo               `json:"stages"`
+	Tools       []ToolInfo                `json:"tools"`
+	Errors      []ErrInfo                 `json:"errors"`
+	Assets      []AssetRow                `json:"assets"`
+	URLs        []URLRow                  `json:"urls"`
+	JS          []JSRow                   `json:"javascript"`
+	JSFetches   []storage.JSFetch         `json:"javascript_fetches"`
+	Cands       []CandRow                 `json:"js_candidates"`
+	Changes     []ChangeRow               `json:"changes"`
+	Coverage    []KindCoverage            `json:"coverage"`
+	Artifacts   []string                  `json:"artifacts"`
+	Complete    bool                      `json:"complete"` // true only when every planned stage succeeded
+	Leads       []FindingRow              `json:"findings"`
+	History     []HistoryRow              `json:"history"`
+	Filtered    map[string]map[string]int `json:"filtered"` // stage -> what was kept out of the database (still in raw evidence)
+	Truncated   map[string]int            `json:"html_truncated"`
+	Notes       []string                  `json:"notes"`
 }
 
 func iso(t time.Time) string {
@@ -334,7 +344,9 @@ func Build(in Input) (*Report, error) {
 		}
 		r.Coverage = append(r.Coverage, kc)
 	}
+	enrich(r, in)
 	r.Notes = append(r.Notes,
+		"Findings are leads for manual review, derived from names and fingerprints. None is a confirmed vulnerability.",
 		"JavaScript candidates come from static regex extraction and are unverified; they are not vulnerabilities.",
 		"URLs with origin 'historical' come from web archives and are not evidence of current availability.",
 		"'not_seen' means absent from this run; it is not proof of removal. 'confirmed_removed' is never produced.")
@@ -508,9 +520,34 @@ func Generate(in Input) ([]storage.Artifact, error) {
 			return arts, err
 		}
 	}
+	if in.RunDir != "" {
+		files, _ := normalizedFiles(r)
+		runNorm := filepath.Join(in.RunDir, "normalized")
+		if err := os.MkdirAll(runNorm, 0o700); err != nil {
+			return arts, err
+		}
+		for name, data := range files {
+			if err := put(runNorm, name, "normalized", data); err != nil {
+				return arts, err
+			}
+			if in.NormDir != "" { // newest run's copy for scripts that want a stable path
+				if err := os.MkdirAll(in.NormDir, 0o700); err != nil {
+					return arts, err
+				}
+				if err := WriteAtomic(filepath.Join(in.NormDir, name), data); err != nil {
+					return arts, err
+				}
+			}
+		}
+	}
 	// latest.json last so it can list every artifact above
 	r.Artifacts = append(r.Artifacts, "latest.json")
 	full := jsonBytes(r)
+	if in.RunDir != "" { // per-run copy: history stays readable after the next run overwrites latest.*
+		if err := WriteAtomic(filepath.Join(in.RunDir, "report.json"), full); err != nil {
+			return arts, err
+		}
+	}
 	p := filepath.Join(in.ReportsDir, "latest.json")
 	if err := WriteAtomic(p, full); err != nil {
 		return arts, err

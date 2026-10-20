@@ -23,6 +23,7 @@ type Spec struct {
 	MaxRaw    int64        // bytes of stdout kept in RawPath; further output is still parsed
 	MaxLine   int          // longer lines are dropped (and counted)
 	RawPath   string       // optional evidence file (0600)
+	RawAppend bool         // append to RawPath instead of truncating (several processes, one stage)
 	OnLine    func([]byte) // called for each stdout line; slice valid only during the call
 	StderrCap int
 }
@@ -98,7 +99,11 @@ func Run(ctx context.Context, s Spec) Result {
 	}
 	var raw *os.File
 	if s.RawPath != "" {
-		if raw, err = os.OpenFile(s.RawPath, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0o600); err != nil {
+		flag := os.O_CREATE | os.O_WRONLY | os.O_TRUNC
+		if s.RawAppend {
+			flag = os.O_CREATE | os.O_WRONLY | os.O_APPEND
+		}
+		if raw, err = os.OpenFile(s.RawPath, flag, 0o600); err != nil {
 			res.Err = err
 			return res
 		}

@@ -47,9 +47,12 @@ type Config struct {
 		MaxLineBytes   int   `yaml:"max_line_bytes"`
 		MaxRecords     int   `yaml:"max_records_per_stage"`
 		JSDownload     int64 `yaml:"js_download_bytes"`
+		MaxPerShape    int   `yaml:"max_urls_per_shape"` // URL variants kept per path/param-name shape (rest stay in raw evidence)
 	} `yaml:"limits"`
 	Crawl struct {
-		Depth int `yaml:"depth"`
+		Depth      int           `yaml:"depth"`
+		Parallel   int           `yaml:"parallel"`    // hosts crawled at once (one katana process each)
+		HostBudget time.Duration `yaml:"host_budget"` // crawl-time budget per host; a host that hits it is reported, not hidden
 	} `yaml:"crawl"`
 	JS struct {
 		Enabled bool          `yaml:"enabled"`
@@ -88,7 +91,10 @@ func Default() *Config {
 	c.Limits.MaxLineBytes = 1 << 20
 	c.Limits.MaxRecords = 200000
 	c.Limits.JSDownload = 5 << 20
+	c.Limits.MaxPerShape = 5
 	c.Crawl.Depth = 2
+	c.Crawl.Parallel = 3
+	c.Crawl.HostBudget = 3 * time.Minute
 	c.JS.Enabled = true
 	c.JS.Workers = 4
 	c.JS.RPS = 5
@@ -174,6 +180,9 @@ func (c *Config) Validate() error {
 	}
 	if c.Crawl.Depth < 1 || c.Crawl.Depth > 10 {
 		bad("crawl.depth must be 1..10")
+	}
+	if c.Crawl.Parallel < 1 || c.Crawl.Parallel > 16 || c.Crawl.HostBudget < 10*time.Second || c.Limits.MaxPerShape < 1 {
+		bad("crawl.parallel must be 1..16, crawl.host_budget >= 10s, limits.max_urls_per_shape >= 1")
 	}
 	if c.JS.Workers < 1 || c.JS.Workers > 32 || c.JS.RPS < 1 || c.JS.Timeout <= 0 || c.JS.MaxFile < 1 {
 		bad("javascript.* values out of range")

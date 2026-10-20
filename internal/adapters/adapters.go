@@ -33,6 +33,9 @@ type Input struct {
 	RateLimit int
 	Depth     int
 	Timeout   time.Duration
+	Seed      string          // single crawl target (katana runs once per host)
+	Budget    time.Duration   // per-process crawl budget
+	Has       map[string]bool // optional flags the installed tool supports
 }
 
 type Adapter struct {
@@ -44,6 +47,7 @@ type Adapter struct {
 	HelpArgs      []string
 	VersionArgs   []string
 	RequiredFlags []string
+	OptionalFlags []string // used only when the installed help text lists them
 	Install       string
 	Args          func(Input) []string
 	Parse         func(line []byte, in Input) ([]model.Obs, error)
@@ -62,6 +66,7 @@ type Info struct {
 	Status              Status
 	MissingFlags        []string
 	Detail, Install     string
+	Has                 map[string]bool
 }
 
 var versionRe = regexp.MustCompile(`v?(\d+\.\d+(?:\.\d+)?(?:[-+][\w.]+)?)`)
@@ -108,6 +113,10 @@ func (a *Adapter) Detect(ctx context.Context, configured string) Info {
 		if m := versionRe.FindStringSubmatch(probe(ctx, path, a.VersionArgs)); m != nil {
 			info.Version = m[1]
 		}
+	}
+	info.Has = map[string]bool{}
+	for _, f := range a.OptionalFlags {
+		info.Has[f] = strings.Contains(help, f)
 	}
 	if len(info.MissingFlags) > 0 {
 		info.Status = Incompatible
@@ -320,9 +329,20 @@ func katana() *Adapter {
 		RequiredFlags: []string{"-list", "-silent", "-jsonl", "-d", "-jc", "-fs", "-rl", "-c", "-timeout"},
 		Install:       "go install github.com/projectdiscovery/katana/cmd/katana@latest",
 		Args: func(in Input) []string {
-			// -fs fqdn keeps the crawl on each seed's exact host.
-			return []string{"-list", in.File, "-silent", "-jsonl", "-d", itoa(in.Depth), "-jc", "-fs", "fqdn",
+			// -fs fqdn keeps the crawl on the seed's exact host. -ct bounds crawl time, -ef drops static
+			// resources and -iqp stops re-crawling a path for every query value (the usual crawl explosion).
+			args := []string{"-u", in.Seed, "-silent", "-jsonl", "-d", itoa(in.Depth), "-jc", "-fs", "fqdn",
 				"-rl", itoa(in.RateLimit), "-c", itoa(in.Threads), "-timeout", itoa(int(in.Timeout.Seconds()))}
+			if in.Has["-ct"] && in.Budget > 0 {
+				args = append(args, "-ct", itoa(int(in.Budget.Seconds()))+"s")
+			}
+			if in.Has["-ef"] {
+				args = append(args, "-ef", "png,jpg,jpeg,gif,svg,ico,webp,css,woff,woff2,ttf,otf,eot,mp3,mp4,webm")
+			}
+			if in.Has["-iqp"] {
+				args = append(args, "-iqp")
+			}
+			return args
 		},
 		Parse: func(line []byte, in Input) ([]model.Obs, error) {
 			if len(line) == 0 || line[0] != '{' {

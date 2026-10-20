@@ -95,7 +95,7 @@ If the repository is already on your machine, skip the clone step. The installer
 ### 3. Build from source
 
 ```bash
-go build -o reconflow .
+go build -o reconflow ./cmd/reconflow
 ```
 
 > **Note:** Confirm the installer and required tool versions on your system before running a real engagement.
@@ -140,27 +140,36 @@ Generate a report:
 
 ## 📊 Results & Dashboard
 
-ReconFlow organizes results into machine-readable artifacts and a standalone HTML report.
+Per target, under `<data_dir>/targets/<target>/`:
 
-| Output | Purpose |
+```
+normalized/          clean, deduplicated lists from the newest run (stable path for scripts)
+runs/<run-id>/
+  raw/               untouched tool output + <stage>.meta.json (exit code, stderr, filter counts, per-host crawl record)
+  inputs/            exactly what each tool was fed
+  normalized/        the same lists for THIS run, with manifest.json (SHA-256, completeness, per-stage status)
+  report.json        full report for this run (history stays readable)
+reports/latest.html  React dashboard (single file, works offline)
+```
+
+| Normalized file | Content |
 |---|---|
-| `latest.html` | Interactive HTML dashboard |
-| `latest.json` | Consolidated report data |
-| `execution.json` | Execution details |
-| `coverage.json` | Workflow coverage information |
-| JSONL inventories | Structured, line-by-line observations |
-| Text change lists | Review newly observed or changed assets |
-| SQLite database | Persistent structured data |
+| `subdomains.txt`, `live_hosts.txt/.jsonl` | In-scope subdomains; live services with status, title, tech |
+| `urls.txt`, `urls_priority.tsv` | Kept URLs; score-ranked subset worth looking at first |
+| `js_files.txt`, `api_endpoints.txt/.jsonl` | JavaScript URLs; API URLs plus API paths found in JS (unverified) |
+| `findings.jsonl/.md` | Leads ranked high/medium/low. **Leads are pointers, never confirmed vulnerabilities.** |
+| `manifest.json` | `complete: false` whenever any stage did not succeed |
 
-### Dashboard Highlights
+**Noise handling.** Static resources, `?id=1..N` / `/user/123` variants beyond `limits.max_urls_per_shape`, and
+duplicates are counted but kept out of the lists. They are never lost: raw evidence keeps every line, and the dashboard and
+stage detail show how many were filtered.
 
-- 📈 Review asset and workflow summaries.
-- 🔍 Explore collected observations.
-- 🧾 Inspect supporting evidence and provenance.
-- 🔄 Review changes between runs.
-- 📤 Use structured output for further analysis.
+**Crawling.** `katana` runs once per live host with its own budget (`crawl.host_budget`, `crawl.parallel`). Hosts that hit
+the budget, failed, or never started are named in the stage detail and make the stage `partial` (never silently complete).
 
-The report is designed to work locally without requiring a hosted dashboard.
+The dashboard (`dashboard/`, React + Vite, built into one HTML file and embedded in the binary) has Overview, Leads, Hosts,
+Subdomains, Endpoints, JavaScript, Changes, Runs and Pipeline views with search, filters, sorting and detail drawers.
+Rebuild it with `make dashboard` (needs Node; the built file is committed).
 
 ---
 
