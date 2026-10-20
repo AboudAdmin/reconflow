@@ -79,7 +79,7 @@ ReconFlow orchestrates external tools; each must be installed and compatible wit
 ### 1. Clone the repository
 
 ```bash
-git clone <YOUR-REPOSITORY-URL>
+git clone https://github.com/AboudAdmin/reconflow.git
 cd reconflow
 ```
 
